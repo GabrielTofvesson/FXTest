@@ -12,6 +12,31 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Main extends Application {
 
+    private static final Unsafe unsafe;
+    private static final AtomicBoolean launchCalled;
+    private static final long valueInject;
+
+    static{
+        Unsafe un = null;
+        AtomicBoolean ab = null;
+        long vi = 0;
+        try{
+            Field f = Unsafe.class.getDeclaredField("theUnsafe");
+            f.setAccessible(true);
+            un = (Unsafe) f.get(null);
+
+            f = LauncherImpl.class.getDeclaredField("launchCalled");
+            f.setAccessible(true);
+            ab = (AtomicBoolean) f.get(null);
+
+            f = AtomicBoolean.class.getDeclaredField("value");
+            vi = un.objectFieldOffset(f);
+        }catch(Exception ignored){}
+        unsafe = un;
+        launchCalled = ab;
+        valueInject = vi;
+    }
+
     @Override
     public void start(Stage primaryStage) throws Exception{
         Parent root = FXMLLoader.load(getClass().getResource("sample.fxml"));
@@ -24,39 +49,29 @@ public class Main extends Application {
     public static void main(String[] args) throws Throwable{
 
         // Start first JavaFX thread
-        Thread t = new Thread(() -> { try { resetJFXTracker(); launch(args); }catch(Exception ignored){} });
+        Thread t = new Thread(() -> { try { launch(args); }catch(Exception ignored){} });
         t.setDaemon(true);
         t.start();
-        Thread.sleep(2);
+        Thread.sleep(1); // Give thread some time to start and stuff since it doesn't have to invoke unsafe stuff.
 
-        Thread t1 = new Thread(() -> { resetJFXTracker(); try { launch(args); }catch(Exception ignored){} });
+
+        // The other threads should be slow (and fast) enough that they don't need Thread.sleep()
+        Thread t1 = new Thread(() -> { unsafe.putIntVolatile(launchCalled, valueInject, 0); try { launch(args); }catch(Exception ignored){} });
         t1.setDaemon(true);
         t1.start();
-        Thread.sleep(2);
 
-        Thread t2 = new Thread(() -> { resetJFXTracker(); try { launch(args); }catch(Exception ignored){} });
+        Thread t2 = new Thread(() -> { unsafe.putIntVolatile(launchCalled, valueInject, 0); try { launch(args); }catch(Exception ignored){} });
         t2.setDaemon(true);
         t2.start();
-        Thread.sleep(2);
 
-        resetJFXTracker();
+        Thread t3 = new Thread(() -> { unsafe.putIntVolatile(launchCalled, valueInject, 0); try { launch(args); }catch(Exception ignored){} });
+        t3.setDaemon(true);
+        t3.start();
+
+        // -- || -- (Should be infinitely expandable in this fashion)
+
+        unsafe.putIntVolatile(launchCalled, valueInject, 0);
         // Start second JavaFX thread
         try { launch(args); }catch(Exception ignored){}
-    }
-
-    public static void resetJFXTracker(){
-        try {
-            // Get unsafe
-            final Unsafe u;
-            Field f1 = Unsafe.class.getDeclaredField("theUnsafe");
-            f1.setAccessible(true);
-            u = (Unsafe) f1.get(null);
-
-            // Modify some memory
-            Field f = AtomicBoolean.class.getDeclaredField("value");
-            Field f2 = LauncherImpl.class.getDeclaredField("launchCalled");
-            f2.setAccessible(true);
-            u.putIntVolatile(f2.get(null), u.objectFieldOffset(f), 0);
-        }catch(Exception ignored){}
     }
 }
